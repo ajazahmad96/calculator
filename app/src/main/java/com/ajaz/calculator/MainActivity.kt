@@ -3,142 +3,543 @@ package com.ajaz.calculator
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.math.BigDecimal
+
+private val Background = Color(0xFF0B0F14)
+private val Panel = Color(0xFF141B24)
+private val NumberButton = Color(0xFF1C2633)
+private val OperatorButton = Color(0xFF263A52)
+private val Accent = Color(0xFF3985F7)
+private val MainText = Color(0xFFF4F7FC)
+private val MutedText = Color(0xFF8B9AAF)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
-            CalculatorScreen()
+            CalculatorApp()
         }
     }
 }
 
 @Composable
-fun CalculatorScreen() {
-    var display by remember { mutableStateOf("0") }
-    var firstNumber by remember { mutableStateOf<Double?>(null) }
-    var operation by remember { mutableStateOf<String?>(null) }
-    var startNewNumber by remember { mutableStateOf(false) }
+fun CalculatorApp() {
+    var expression by remember { mutableStateOf("") }
+    var justEvaluated by remember { mutableStateOf(false) }
 
-    fun calculate() {
-        val first = firstNumber ?: return
-        val second = display.toDoubleOrNull() ?: return
+    val result = remember(expression) {
+        if (expression.isNotEmpty() &&
+            expression.last() !in "+-×÷.") {
+            runCatching {
+                val value = ExpressionParser(
+                    expression
+                ).parse()
 
-        val result = when (operation) {
-            "+" -> first + second
-            "−" -> first - second
-            "×" -> first * second
-            "÷" -> if (second != 0.0) first / second else null
-            else -> null
-        }
-
-        display = result?.let {
-            if (it.isFinite()) {
-                if (it % 1.0 == 0.0) it.toLong().toString()
-                else it.toString()
-            } else "Error"
-        } ?: "Error"
-
-        firstNumber = null
-        operation = null
-        startNewNumber = true
+                if (value.isFinite()) formatNumber(value)
+                else null
+            }.getOrNull()
+        } else null
     }
 
-    val buttons = listOf(
-        listOf("C", "÷"),
+    val display = if (result != null && result != "Error") {
+        result
+    } else {
+        expression.ifEmpty { "0" }
+    }
+
+    fun clear() {
+        expression = ""
+        justEvaluated = false
+    }
+
+    fun addNumber(number: String) {
+        if (justEvaluated) {
+            expression = ""
+            justEvaluated = false
+        }
+
+        expression += number
+    }
+
+    fun addOperator(operator: String) {
+        if (expression.isEmpty()) {
+            if (operator == "−") expression = "−"
+            return
+        }
+
+        justEvaluated = false
+
+        if (expression.last() in "+-×÷.") {
+            expression = expression.dropLast(1) + operator
+        } else {
+            expression += operator
+        }
+    }
+
+    fun addDecimal() {
+        if (justEvaluated) {
+            expression = ""
+            justEvaluated = false
+        }
+
+        val lastPart = expression
+            .substringAfterLast('+')
+            .substringAfterLast('−')
+            .substringAfterLast('×')
+            .substringAfterLast('÷')
+
+        if (!lastPart.contains(".")) {
+            expression += if (
+                expression.isEmpty() ||
+                expression.last() in "+-×÷"
+            ) "0." else "."
+        }
+    }
+
+    fun backspace() {
+        if (justEvaluated) {
+            clear()
+        } else if (expression.isNotEmpty()) {
+            expression = expression.dropLast(1)
+        }
+    }
+
+    fun toggleSign() {
+        if (expression.isEmpty()) return
+
+        justEvaluated = false
+
+        var start = expression.length
+
+        while (start > 0 &&
+            (expression[start - 1].isDigit() ||
+             expression[start - 1] == '.')) {
+            start--
+        }
+
+        if (start == expression.length) return
+
+        if (start > 0 &&
+            expression[start - 1] == '−' &&
+            (start - 1 == 0 ||
+             expression[start - 2] in "+-×÷")) {
+            expression = expression.removeRange(
+                start - 1, start
+            )
+        } else {
+            expression = expression.substring(
+                0, start
+            ) + "−" + expression.substring(start)
+        }
+    }
+
+    fun percentage() {
+        if (expression.isNotEmpty() &&
+            (expression.last().isDigit() ||
+             expression.last() == '.')) {
+            justEvaluated = false
+            expression += "/100"
+        }
+    }
+
+    fun calculate() {
+        if (expression.isEmpty()) return
+
+        runCatching {
+            val value = ExpressionParser(expression).parse()
+
+            if (!value.isFinite()) {
+                throw ArithmeticException()
+            }
+
+            expression = formatNumber(value)
+            justEvaluated = true
+        }.onFailure {
+            expression = "Error"
+            justEvaluated = true
+        }
+    }
+
+    val rows = listOf(
+        listOf("AC", "⌫", "%", "÷"),
         listOf("7", "8", "9", "×"),
         listOf("4", "5", "6", "−"),
         listOf("1", "2", "3", "+"),
-        listOf("0", ".", "=")
+        listOf("+/−", "0", ".", "=")
     )
 
     MaterialTheme {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = MaterialTheme.colorScheme.surface
+            color = Background
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.Bottom
+                    .padding(
+                        horizontal = 20.dp,
+                        vertical = 18.dp
+                    ),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = "Calculator",
-                    fontSize = 30.sp
-                )
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Text(
-                    text = display,
-                    fontSize = 48.sp,
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 24.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                    maxLines = 1
-                )
+                        .padding(top = 12.dp),
+                    horizontalArrangement =
+                        Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            "CALCULATOR",
+                            color = MainText,
+                            fontSize = 23.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp
+                        )
 
-                buttons.forEach { row ->
+                        Text(
+                            "STANDARD EDITION",
+                            color = MutedText,
+                            fontSize = 10.sp,
+                            letterSpacing = 2.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Panel)
+                            .padding(
+                                horizontal = 14.dp,
+                                vertical = 9.dp
+                            )
+                    ) {
+                        Text(
+                            "PRO",
+                            color = Accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 2.sp
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Panel)
+                        .padding(20.dp),
+                    contentAlignment = Alignment.BottomEnd
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement =
+                            Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = expression.ifEmpty {
+                                "Ready to calculate"
+                            },
+                            color = MutedText,
+                            fontSize = 19.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.End
+                        )
+
+                        AnimatedContent(
+                            targetState = display,
+                            transitionSpec = {
+                                (
+                                    fadeIn() +
+                                    slideInVertically {
+                                        it / 5
+                                    }
+                                ) togetherWith (
+                                    fadeOut() +
+                                    slideOutVertically {
+                                        -it / 5
+                                    }
+                                )
+                            },
+                            label = "CalculatorDisplay"
+                        ) { value ->
+                            Text(
+                                text = value,
+                                color = MainText,
+                                fontSize = 46.sp,
+                                fontWeight = FontWeight.Light,
+                                maxLines = 1,
+                                softWrap = false,
+                                textAlign = TextAlign.End
+                            )
+                        }
+
+                        Text(
+                            text = if (result != null) {
+                                "LIVE RESULT"
+                            } else {
+                                " "
+                            },
+                            color = Accent,
+                            fontSize = 11.sp,
+                            letterSpacing = 2.sp
+                        )
+                    }
+                }
+
+                rows.forEach { row ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement =
+                            Arrangement.spacedBy(10.dp)
                     ) {
-                        row.forEach { button ->
-                            Button(
-                                onClick = {
-                                    when (button) {
-                                        "C" -> {
-                                            display = "0"
-                                            firstNumber = null
-                                            operation = null
-                                            startNewNumber = false
-                                        }
-                                        "+", "−", "×", "÷" -> {
-                                            firstNumber = display.toDoubleOrNull()
-                                            operation = button
-                                            startNewNumber = true
-                                        }
-                                        "=" -> calculate()
-                                        "." -> {
-                                            if (startNewNumber) {
-                                                display = "0."
-                                                startNewNumber = false
-                                            } else if (!display.contains(".")) {
-                                                display += "."
-                                            }
-                                        }
-                                        else -> {
-                                            if (startNewNumber || display == "0" || display == "Error") {
-                                                display = button
-                                                startNewNumber = false
-                                            } else {
-                                                display += button
-                                            }
-                                        }
-                                    }
-                                },
+                        row.forEach { label ->
+
+                            val isEquals = label == "="
+                            val isOperator =
+                                label in listOf(
+                                    "÷", "×", "−", "+"
+                                )
+                            val isUtility =
+                                label in listOf(
+                                    "AC", "⌫", "%", "+/−"
+                                )
+
+                            val buttonColor = when {
+                                isEquals -> Accent
+                                isOperator -> OperatorButton
+                                isUtility -> Panel
+                                else -> NumberButton
+                            }
+
+                            val textColor = when {
+                                isEquals -> Color.White
+                                isOperator -> Accent
+                                isUtility -> MutedText
+                                else -> MainText
+                            }
+
+                            CalculatorKey(
+                                label = label,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .height(68.dp),
-                                shape = RoundedCornerShape(16.dp)
+                                    .height(66.dp),
+                                background = buttonColor,
+                                foreground = textColor
                             ) {
-                                Text(button, fontSize = 23.sp)
+                                when (label) {
+                                    "AC" -> clear()
+                                    "⌫" -> backspace()
+                                    "%" -> percentage()
+                                    "+/−" -> toggleSign()
+                                    "." -> addDecimal()
+                                    "=" -> calculate()
+                                    "+", "−", "×", "÷" ->
+                                        addOperator(label)
+                                    else -> addNumber(label)
+                                }
                             }
                         }
                     }
-                    Spacer(modifier = Modifier.height(8.dp))
                 }
+
+                Spacer(
+                    modifier = Modifier.height(2.dp)
+                )
+
+                Text(
+                    text = "DESIGNED BY AJAZ",
+                    color = MutedText.copy(alpha = 0.55f),
+                    fontSize = 10.sp,
+                    letterSpacing = 3.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 4.dp)
+                )
             }
         }
+    }
+}
+
+@Composable
+fun CalculatorKey(
+    label: String,
+    modifier: Modifier,
+    background: Color,
+    foreground: Color,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember {
+        MutableInteractionSource()
+    }
+
+    val pressed by interactionSource.collectIsPressedAsState()
+
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.92f else 1f,
+        animationSpec = spring(
+            dampingRatio = 0.55f,
+            stiffness = 500f
+        ),
+        label = "ButtonScale"
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+            .clip(RoundedCornerShape(20.dp))
+            .background(background)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            color = foreground,
+            fontSize = if (label.length > 2) 17.sp else 23.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+private fun formatNumber(value: Double): String {
+    return BigDecimal.valueOf(value)
+        .stripTrailingZeros()
+        .toPlainString()
+}
+
+private class ExpressionParser(
+    private val input: String
+) {
+    private var position = 0
+
+    fun parse(): Double {
+        val value = expression()
+
+        if (position != input.length) {
+            error("Invalid expression")
+        }
+
+        return value
+    }
+
+    private fun expression(): Double {
+        var value = term()
+
+        while (position < input.length) {
+            when (input[position]) {
+                '+' -> {
+                    position++
+                    value += term()
+                }
+                '−', '-' -> {
+                    position++
+                    value -= term()
+                }
+                else -> return value
+            }
+        }
+
+        return value
+    }
+
+    private fun term(): Double {
+        var value = factor()
+
+        while (position < input.length) {
+            when (input[position]) {
+                '×', '*' -> {
+                    position++
+                    value *= factor()
+                }
+                '÷', '/' -> {
+                    position++
+                    val divisor = factor()
+                    if (divisor == 0.0) {
+                        error("Division by zero")
+                    }
+                    value /= divisor
+                }
+                else -> return value
+            }
+        }
+
+        return value
+    }
+
+    private fun factor(): Double {
+        if (position >= input.length) {
+            error("Missing number")
+        }
+
+        when (input[position]) {
+            '−', '-' -> {
+                position++
+                return -factor()
+            }
+            '+' -> {
+                position++
+                return factor()
+            }
+        }
+
+        val start = position
+
+        while (
+            position < input.length &&
+            (input[position].isDigit() ||
+             input[position] == '.')
+        ) {
+            position++
+        }
+
+        if (start == position) {
+            error("Invalid number")
+        }
+
+        return input.substring(start, position)
+            .toDouble()
     }
 }
